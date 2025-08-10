@@ -1,15 +1,79 @@
+# version: '3.8'
+# services:
+#   app:
+#     build: .
+#     ports:
+#       - '3000:3000'
+#     environment:
+#       - PORT=3000
+#       - REDIS_URL=redis://redis:6379
+#     depends_on:
+#       - redis
+#   redis:
+#     image: redis:7
+#     ports:
+#       - '6379:6379'
+
+#   prometheus:
+#     image: prom/prometheus:latest
+#     volumes:
+#       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+#     ports:
+#       - '9090:9090'
+
+#   grafana:
+#     image: grafana/grafana:latest
+#     ports:
+#       - '3001:3000'
+#     depends_on:
+#       - prometheus
+
 version: '3.8'
+
 services:
   app:
     build: .
     ports:
       - '3000:3000'
-    environment:
-      - PORT=3000
-      - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
+      - prometheus
+      - jaeger
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PROMETHEUS_URL=http://prometheus:9090
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+
   redis:
-    image: redis:7
+    image: redis:7-alpine
     ports:
       - '6379:6379'
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - '9090:9090'
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - '3001:3000'
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana-storage:/var/lib/grafana
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - '16686:16686'
+      - '14268:14268'
+
+networks:
+  monitoring:
+
+volumes:
+  grafana-storage:

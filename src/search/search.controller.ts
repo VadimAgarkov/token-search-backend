@@ -1,21 +1,39 @@
 import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
-import { ApiTags, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiQuery,
+  ApiOkResponse,
+  ApiBadRequestResponse,
+} from '@nestjs/swagger';
 import { SearchService } from './search.service';
+import { SearchApiResultDto } from './dto/search-api-result.dto';
+import { SearchQueryDto } from './dto/search-query.dto';
 
 @ApiTags('search')
 @Controller('search')
 export class SearchController {
-  constructor(private readonly svc: SearchService) {}
+  constructor(private readonly searchService: SearchService) {}
 
   @Get()
-  @ApiQuery({ name: 'q', required: true })
+  @ApiQuery({
+    name: 'queryText',
+    description: 'Search query text',
+    required: true,
+    type: String,
+  })
   @ApiQuery({
     name: 'type',
+    description: 'Search type',
     required: false,
     enum: ['address', 'pair', 'name'],
   })
-  async search(@Query('q') q: string, @Query('type') type?: string) {
-    if (!q) throw new BadRequestException('q required');
-    return this.svc.search(q, type as any);
+  @ApiOkResponse({
+    description: 'Search results',
+    type: [SearchApiResultDto],
+  })
+  @ApiBadRequestResponse({ description: 'Missing required parameter q' })
+  async search(@Query() query: SearchQueryDto) {
+    if (!query.queryText) throw new BadRequestException('queryText required');
+    return this.searchService.search(query.queryText, query.type as any);
   }
 }

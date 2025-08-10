@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CacheService } from '../common/cache.service';
 import { ISearchProvider } from './providers/interfaces/search-provider.interface';
 import config from '../config';
+import { SearchApiResult } from './interfaces/search-api-result.interface';
+import { DexscreenerResponse } from './interfaces/dexscreener-response.interface';
+import { mapDexscreener } from './mappers/dexscreener.mapper';
+import { Counter, Histogram } from 'prom-client';
 
 export interface DexscreenerPair {
   id: string;
@@ -14,20 +18,30 @@ export interface DexscreenerToken {
   name: string;
 }
 
-export interface DexscreenerResponse {
-  pairs: DexscreenerPair[];
-  tokens: DexscreenerToken[];
-}
-
-export interface SearchResult {
+export interface SearchResult<T = any> {
   source: string;
-  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
-  raw: DexscreenerResponse | any;
+  raw: T;
 }
 
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger('SearchService');
+
+  private searchRequestsTotal = new Counter({
+    name: 'search_requests_total',
+    help: 'Total number of search requests',
+  });
+
+  private searchRequestDuration = new Histogram({
+    name: 'search_request_duration_seconds',
+    help: 'Duration of search requests in seconds',
+    buckets: [0.1, 0.5, 1, 2, 5],
+  });
+
+  private searchErrorsTotal = new Counter({
+    name: 'search_errors_total',
+    help: 'Total number of errors during search',
+  });
 
   constructor(
     private readonly cache: CacheService,
@@ -41,13 +55,17 @@ export class SearchService {
   async search(
     q: string,
     type: 'address' | 'pair' | 'name',
-  ): Promise<{ source: string; results: SearchResult[] }> {
-    const key = this.buildCacheKey(type, q);
+  ): Promise<{ source: string; results: SearchApiResult[] }> {
+    this.searchRequestsTotal.inc(); // увеличиваем счётчик запросов
+    const endTimer = this.searchRequestDuration.startTimer(); // старт таймера
 
     try {
-      const cached = await this.cache.get<SearchResult[]>(key);
+      const key = this.buildCacheKey(type, q);
+      const cached = await this.cache.get<SearchApiResult[]>(key);
+
       if (cached) {
         this.logger.log(`Cache hit for key ${key}`);
+        endTimer();
         return { source: 'cache', results: cached };
       }
 
@@ -56,26 +74,39 @@ export class SearchService {
       const resultsArrays = await Promise.all(
         this.providers.map(async (provider) => {
           try {
-            return await provider.search(q, type);
-          } catch (error) {
-            this.logger.error(
-              `Error from provider ${provider.constructor.name} for query "${q}": ${error instanceof Error ? error.message : error}`,
-            );
+            if (provider.name === 'Dexscreener') {
+              const rawResults = (await provider.search(
+                q,
+                type,
+              )) as SearchResult<DexscreenerResponse>[];
+              return rawResults.flatMap((r) => mapDexscreener(r.raw));
+            } else {
+              return [];
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.error(`Provider ${provider.name} failed: ${msg}`);
             return [];
           }
         }),
       );
 
       const results = resultsArrays.flat();
-
       await this.cache.set(key, results, config.cacheTtlSec);
 
+      endTimer();
       return { source: 'remote', results };
-    } catch (error) {
-      this.logger.error(
-        `Search failed for query "${q}": ${error instanceof Error ? error.message : error}`,
-      );
-      return { source: 'error', results: [] };
+    } catch (error: unknown) {
+      this.searchErrorsTotal.inc();
+
+      if (error instanceof Error) {
+        this.logger.error(error.message);
+      } else {
+        this.logger.error('Unknown error in search service');
+      }
+
+      endTimer();
+      throw error;
     }
   }
 }

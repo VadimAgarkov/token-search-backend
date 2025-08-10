@@ -2,10 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ISearchProvider } from './interfaces/search-provider.interface';
-import { SearchResult, DexscreenerResponse } from '../search.service';
+import { SearchResult } from '../search.service';
+import { DexscreenerResponse } from '../interfaces/dexscreener-response.interface';
 
 @Injectable()
 export class DexscreenerProvider implements ISearchProvider {
+  name = 'Dexscreener';
   private readonly logger = new Logger(DexscreenerProvider.name);
 
   constructor(private readonly http: HttpService) {}

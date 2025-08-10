@@ -1,16 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SearchQueryDto {
   @ApiProperty({
-    description: 'Search field: address, part of the name, or pair',
+    description: 'Search query text: address, part of the name, or pair',
     example: '0xabc... or token/eth or Uniswap',
   })
-  q: string;
+  queryText: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: "Search type: 'address' | 'pair' | 'name'",
-    required: false,
     example: 'address',
+    enum: ['address', 'pair', 'name'],
   })
   type?: 'address' | 'pair' | 'name';
 }
