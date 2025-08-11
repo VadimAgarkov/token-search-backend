@@ -30,24 +30,24 @@ services:
     networks:
       - monitoring
 
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - '3001:3000'
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-    depends_on:
-      - prometheus
-      - tempo
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   ports:
+  #     - '3001:3000'
+  #   volumes:
+  #     - ./grafana/provisioning:/etc/grafana/provisioning
+  #   depends_on:
+  #     - prometheus
+  #     - tempo
 
-  tempo:
-    image: grafana/tempo:latest
-    ports:
-      - '4317:4317'
-      - '4318:4318'
-    command: ['-config.file=/etc/tempo.yaml']
-    volumes:
-      - ./tempo.yaml:/etc/tempo.yaml
+  # tempo:
+  #   image: grafana/tempo:latest
+  #   ports:
+  #     - '4317:4317'
+  #     - '4318:4318'
+  #   command: ['-config.file=/etc/tempo.yaml']
+  #   volumes:
+  #     - ./tempo.yaml:/etc/tempo.yaml
 
 networks:
   monitoring:
