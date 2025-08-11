@@ -1,22 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CacheService } from '../common/cache.service';
 import { ISearchProvider } from './providers/interfaces/search-provider.interface';
 import config from '../config';
 import { SearchApiResult } from './interfaces/search-api-result.interface';
 import { DexscreenerResponse } from './interfaces/dexscreener-response.interface';
 import { mapDexscreener } from './mappers/dexscreener.mapper';
-import { Counter, Histogram } from 'prom-client';
-
-export interface DexscreenerPair {
-  id: string;
-  name: string;
-}
-
-export interface DexscreenerToken {
-  id: string;
-  symbol: string;
-  name: string;
-}
+import { Counter, Histogram, register } from 'prom-client';
 
 export interface SearchResult<T = any> {
   source: string;
@@ -27,26 +16,50 @@ export interface SearchResult<T = any> {
 export class SearchService {
   private readonly logger = new Logger('SearchService');
 
-  private searchRequestsTotal = new Counter({
-    name: 'search_requests_total',
-    help: 'Total number of search requests',
-  });
-
-  private searchRequestDuration = new Histogram({
-    name: 'search_request_duration_seconds',
-    help: 'Duration of search requests in seconds',
-    buckets: [0.1, 0.5, 1, 2, 5],
-  });
-
-  private searchErrorsTotal = new Counter({
-    name: 'search_errors_total',
-    help: 'Total number of errors during search',
-  });
+  private readonly searchRequestsTotal: Counter<string>;
+  private readonly searchRequestDuration: Histogram<string>;
+  private readonly searchErrorsTotal: Counter<string>;
 
   constructor(
     private readonly cache: CacheService,
-    private readonly providers: ISearchProvider[],
-  ) {}
+    @Inject('SEARCH_PROVIDERS') private readonly providers: ISearchProvider[],
+  ) {
+    this.searchRequestsTotal = this.getOrCreateCounter(
+      'search_requests_total',
+      'Total number of search requests',
+    );
+
+    this.searchRequestDuration = this.getOrCreateHistogram(
+      'search_request_duration_seconds',
+      'Duration of search requests in seconds',
+      [0.1, 0.5, 1, 2, 5],
+    );
+
+    this.searchErrorsTotal = this.getOrCreateCounter(
+      'search_errors_total',
+      'Total number of errors during search',
+    );
+  }
+
+  private getOrCreateCounter(name: string, help: string): Counter<string> {
+    const existing = register.getSingleMetric(name);
+    if (existing && existing instanceof Counter) {
+      return existing;
+    }
+    return new Counter({ name, help, registers: [register] });
+  }
+
+  private getOrCreateHistogram(
+    name: string,
+    help: string,
+    buckets: number[],
+  ): Histogram<string> {
+    const existing = register.getSingleMetric(name);
+    if (existing && existing instanceof Histogram) {
+      return existing;
+    }
+    return new Histogram({ name, help, buckets, registers: [register] });
+  }
 
   private buildCacheKey(type: string, q: string) {
     return `search:${type}:${q.toLowerCase()}`;
@@ -56,8 +69,8 @@ export class SearchService {
     q: string,
     type: 'address' | 'pair' | 'name',
   ): Promise<{ source: string; results: SearchApiResult[] }> {
-    this.searchRequestsTotal.inc(); // увеличиваем счётчик запросов
-    const endTimer = this.searchRequestDuration.startTimer(); // старт таймера
+    this.searchRequestsTotal.inc();
+    const endTimer = this.searchRequestDuration.startTimer();
 
     try {
       const key = this.buildCacheKey(type, q);
@@ -96,7 +109,7 @@ export class SearchService {
 
       endTimer();
       return { source: 'remote', results };
-    } catch (error: unknown) {
+    } catch (error) {
       this.searchErrorsTotal.inc();
 
       if (error instanceof Error) {

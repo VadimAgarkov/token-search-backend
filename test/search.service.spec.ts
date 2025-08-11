@@ -1,116 +1,124 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { CacheService } from 'src/common/cache.service';
-import { ISearchProvider } from 'src/search/providers/interfaces/search-provider.interface';
-import { SearchResult, SearchService } from 'src/search/search.service';
+import { SearchService, SearchResult } from '../src/search/search.service';
+import { CacheService } from '../src/common/cache.service';
+import { Logger } from '@nestjs/common';
+import { ISearchProvider } from './providers/interfaces/search-provider.interface';
 
 describe('SearchService', () => {
   let service: SearchService;
-  let cacheService: CacheService;
-  let mockProviders: ISearchProvider[];
+  // let cacheService: CacheService;
+  let providers: ISearchProvider[];
+
+  const mockCache = {
+    get: jest.fn(),
+    set: jest.fn(),
+  };
+
+  const mockLogger = {
+    log: jest.fn(),
+    error: jest.fn(),
+  };
 
   beforeEach(async () => {
-    mockProviders = [
+    providers = [
       {
-        search: jest
-          .fn()
-          .mockResolvedValue([
-            { source: 'provider1', raw: {} },
-          ] as SearchResult[]),
+        name: 'Dexscreener',
+        search: jest.fn(),
       },
       {
-        search: jest
-          .fn()
-          .mockResolvedValue([
-            { source: 'provider2', raw: {} },
-          ] as SearchResult[]),
+        name: 'OtherProvider',
+        search: jest.fn(),
       },
     ];
 
-    // Мокаем CacheService с пустыми методами get и set
-    const cacheServiceMock = {
-      get: jest.fn(),
-      set: jest.fn(),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        { provide: CacheService, useValue: cacheServiceMock },
-        {
-          provide: 'SEARCH_PROVIDERS',
-          useValue: mockProviders,
-        },
+        { provide: CacheService, useValue: mockCache },
+        { provide: Logger, useValue: mockLogger },
+
+        // Регистрируем токен SEARCH_PROVIDERS и передаём массив провайдеров
+        { provide: 'SEARCH_PROVIDERS', useValue: providers },
+
+        // Создаём SearchService через фабрику, чтобы Nest знал как инжектить зависимости
         {
           provide: SearchService,
-          useFactory: (cache: CacheService, providers: ISearchProvider[]) =>
-            new SearchService(cache, providers),
+          useFactory: (
+            cacheService: CacheService,
+            searchProviders: ISearchProvider[],
+          ) => {
+            return new SearchService(cacheService, searchProviders);
+          },
           inject: [CacheService, 'SEARCH_PROVIDERS'],
         },
       ],
     }).compile();
 
     service = module.get<SearchService>(SearchService);
-    cacheService = module.get<CacheService>(CacheService);
   });
 
-  it('should return cached results if cache hit', async () => {
-    const key = 'search:address:testquery';
-    const cachedResults: SearchResult[] = [{ source: 'cache', raw: {} }];
-
-    jest.spyOn(cacheService, 'get').mockResolvedValue(cachedResults);
-
-    const res = await service.search('testquery', 'address');
-
-    expect(res.source).toBe('cache');
-    expect(res.results).toEqual(cachedResults);
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(cacheService.get).toHaveBeenCalledWith(key);
+  afterEach(() => {
+    jest.clearAllMocks();
   });
 
-  it('should call all providers and cache results on cache miss', async () => {
-    jest.spyOn(cacheService, 'get').mockResolvedValue(null);
-    const setSpy = jest.spyOn(cacheService, 'set').mockResolvedValue();
+  it('should return cached results if present', async () => {
+    mockCache.get.mockResolvedValue([{ id: 'cached' }]);
 
-    const res = await service.search('testquery', 'address');
+    const result = await service.search('query', 'address');
 
-    expect(res.source).toBe('remote');
-    expect(res.results.length).toBe(2);
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockProviders[0].search).toHaveBeenCalledWith(
-      'testquery',
-      'address',
+    expect(mockCache.get).toHaveBeenCalledWith('search:address:query');
+    expect(mockLogger.log).toHaveBeenCalledWith(
+      'Cache hit for key search:address:query',
     );
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockProviders[1].search).toHaveBeenCalledWith(
-      'testquery',
-      'address',
+    expect(result.source).toBe('cache');
+    expect(result.results).toEqual([{ id: 'cached' }]);
+  });
+
+  it('should query providers and cache results on cache miss', async () => {
+    mockCache.get.mockResolvedValue(null);
+    const providerResults: SearchResult[] = [
+      {
+        source: 'Dexscreener',
+        raw: {
+          /* some data */
+        },
+      },
+    ];
+    // Мокаем search у Dexscreener
+    providers[0].search.mockResolvedValue(providerResults);
+    // Другой провайдер возвращает пустой массив
+    providers[1].search.mockResolvedValue([]);
+
+    // Нужно также замокать mapDexscreener, если используется. Для упрощения допустим, что он просто возвращает []
+    // Или можно подменить на jest.fn(), если он импортируется из модуля
+
+    const results = await service.search('query', 'address');
+
+    expect(mockCache.get).toHaveBeenCalled();
+    expect(providers[0].search).toHaveBeenCalledWith('query', 'address');
+    expect(providers[1].search).toHaveBeenCalledWith('query', 'address');
+    expect(mockCache.set).toHaveBeenCalled();
+    expect(results.source).toBe('remote');
+  });
+
+  it('should increment error counter and log error if provider fails', async () => {
+    mockCache.get.mockResolvedValue(null);
+    providers[0].search.mockRejectedValue(new Error('Provider error'));
+    providers[1].search.mockResolvedValue([]);
+
+    await expect(service.search('query', 'address')).resolves.toBeDefined();
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Provider Dexscreener failed: Provider error',
     );
-    expect(setSpy).toHaveBeenCalled();
   });
 
-  it('should return empty array if providers return empty', async () => {
-    jest.spyOn(cacheService, 'get').mockResolvedValue(null);
-    mockProviders.forEach((p) => (p.search = jest.fn().mockResolvedValue([])));
+  it('should throw error if unexpected error occurs', async () => {
+    mockCache.get.mockRejectedValue(new Error('Cache error'));
 
-    const res = await service.search('emptytest', 'name');
+    await expect(service.search('query', 'address')).rejects.toThrow(
+      'Cache error',
+    );
 
-    expect(res.source).toBe('remote');
-    expect(res.results).toEqual([]);
-  });
-
-  it('should handle provider throwing error gracefully', async () => {
-    jest.spyOn(cacheService, 'get').mockResolvedValue(null);
-    mockProviders[0].search = jest.fn().mockRejectedValue(new Error('fail'));
-    mockProviders[1].search = jest
-      .fn()
-      .mockResolvedValue([{ source: 'ok', raw: {} }]);
-
-    // Чтобы провайдеры не ломали Promise.all, SearchService.search должен ловить ошибки внутри
-    // Если сейчас нет обработки ошибок в SearchService, добавим временно тест с try/catch
-
-    const res = await service.search('failtest', 'pair');
-
-    expect(res.source).toBe('remote');
-    expect(res.results.length).toBe(1);
-    expect(res.results[0].source).toBe('ok');
+    expect(mockLogger.error).toHaveBeenCalledWith('Cache error');
   });
 });

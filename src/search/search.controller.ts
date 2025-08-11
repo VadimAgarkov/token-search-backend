@@ -31,7 +31,9 @@ export class SearchController {
     description: 'Search results',
     type: [SearchApiResultDto],
   })
-  @ApiBadRequestResponse({ description: 'Missing required parameter q' })
+  @ApiBadRequestResponse({
+    description: 'Missing required parameter queryText',
+  })
   async search(@Query() query: SearchQueryDto) {
     if (!query.queryText) throw new BadRequestException('queryText required');
     return this.searchService.search(query.queryText, query.type as any);

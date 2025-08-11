@@ -8,6 +8,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.client = new Redis(config.redisUrl);
+    console.log(
+      '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',
+      config.redisUrl,
+    );
   }
 
   async onModuleDestroy() {
